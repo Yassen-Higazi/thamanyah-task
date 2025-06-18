@@ -1,0 +1,111 @@
+version: "3.8"
+
+services:
+  # NestJS Application Service
+  app:
+    # Use the Dockerfile in the current directory to build the image for this service.
+    # This will use the multi-stage build defined previously.
+    build:
+      context: . # Build context is the current directory (where Dockerfile is located)
+      dockerfile: Dockerfile # Explicitly specify the Dockerfile name
+    # Map container port 3000 to host port 3000.
+    # Ensure this matches the `PORT` in your .env file and `EXPOSE` in Dockerfile.
+    ports:
+      - "3000:3000"
+    # Mount the local .env file to be used by the application inside the container.
+    env_file:
+      - ./.env
+    # Volumes for the application container.
+    volumes:
+      # Mount the /app/uploads directory inside the container to a named volume.
+      # This ensures persistence of uploaded files even if the 'app' container is recreated.
+      - ./uploads/:/app/uploads
+    # Define dependencies to ensure PostgreSQL and Elasticsearch start before the app.
+    depends_on:
+      - redis
+      - postgres
+      - elasticsearch
+    # Restart policy: always restart if the container stops, unless explicitly stopped.
+    restart: always
+
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:17 # Use a lightweight PostgreSQL image
+    ports:
+      - "5433:5432" # Expose PostgreSQL port to host for direct access (optional, but useful for tools)
+    env_file:
+      - ./.env # Use .env for database credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB)
+    environment:
+      # These variables are crucial for PostgreSQL initialization.
+      # They should match the DATABASE_USER, DATABASE_PASSWORD, DATABASE_NAME in your .env file.
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      # Persist PostgreSQL data to a named volume to prevent data loss on container removal.
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  # Elasticsearch Service
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.2 # Use a specific Elasticsearch version
+    ports:
+      - "9200:9200" # Expose HTTP port for Elasticsearch
+    env_file:
+      - ./.env # Use .env for Elasticsearch credentials (ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD)
+    environment:
+      # Essential settings for Elasticsearch in Docker.
+      # `discovery.type=single-node` is for single-node development setup.
+      # `xpack.security.enabled=true` is for enabling security (recommended, requires username/password).
+      ELASTIC_PASSWORD: ${ELASTICSEARCH_PASSWORD} # Use password from .env
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m" # Allocate memory (adjust based on host resources)
+      discovery.type: single-node
+      # Accept the Elastic License
+      xpack.license.self_generated.type: basic
+      xpack.security.enabled: "false" # Ensure security is enabled if you use ELASTIC_PASSWORD
+    volumes:
+      # Persist Elasticsearch data to a named volume.
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    # Set ulimits for mmap counts, required by Elasticsearch.
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: always
+
+  # Kibana Service (for visualizing Elasticsearch data)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.0.2 # Use the same version as Elasticsearch
+    ports:
+      - "5601:5601" # Expose Kibana web interface port
+    # env_file:
+    # - ./.env # Pass environment variables (e.g., Elasticsearch credentials)
+    environment:
+      # Configure Kibana to connect to the Elasticsearch service.
+      # Use the service name 'elasticsearch' as the host.
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      # ELASTICSEARCH_USERNAME: elastic # If X-Pack Security is enabled
+      # ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD} # Use password from .env
+    # Kibana depends on Elasticsearch being up and ready
+    depends_on:
+      - elasticsearch
+    restart: always
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+
+# Define named volumes for data persistence.
+volumes:
+  redis-data: {}
+  app_uploads: {}
+  postgres_data: {}
+  elasticsearch_data: {}
